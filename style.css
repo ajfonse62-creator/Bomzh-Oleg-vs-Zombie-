@@ -1,0 +1,112 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #000;
+  color: #0f0;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  user-select: none;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+}
+
+#mission {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  background: rgba(15, 0, 0, 0.85);
+  padding: 12px 18px;
+  border: 3px solid #f00;
+  color: #fff;
+  font-size: 18px;
+  max-width: 650px;
+  box-shadow: 0 0 15px #f00;
+}
+
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #0f0;
+  font-size: 28px;
+  font-weight: bold;
+  pointer-events: none;
+  text-shadow: 0 0 5px #000;
+}
+
+#hud {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 85px;
+  background: linear-gradient(180deg, #333, #111);
+  border-top: 4px solid #777;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  font-size: 26px;
+  font-weight: bold;
+  color: #ff3333;
+  text-shadow: 2px 2px #000;
+}
+
+#hud span {
+  color: #fff;
+}
+
+#overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: #fff;
+  text-align: center;
+  z-index: 10;
+  padding: 20px;
+}
+
+#overlay h1 {
+  color: #f00;
+  font-size: 38px;
+  margin-bottom: 15px;
+  text-shadow: 3px 3px #500;
+}
+
+#overlay p {
+  font-size: 18px;
+  margin-bottom: 20px;
+  color: #ccc;
+}
+
+button {
+  padding: 15px 35px;
+  font-size: 24px;
+  background: #b00;
+  color: #fff;
+  border: 4px solid #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: bold;
+  transition: transform 0.1s, background 0.1s;
+}
+
+button:hover {
+  background: #f00;
+  transform: scale(1.05);
+}

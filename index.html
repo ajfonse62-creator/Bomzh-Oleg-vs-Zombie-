@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Зомби Апокалипсис против бомжа Олега и кольца 3</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="mission">ЗАДАНИЕ: Нажми «НАЧАТЬ ИГРУ»</div>
+  <div id="crosshair">+</div>
+
+  <div id="viewport">
+    <canvas id="game"></canvas>
+    <div id="sprite-layer"></div>
+    <img id="player-gun" src="gun.png" class="paint-sprite" alt="Оружие">
+  </div>
+
+  <div id="hud">
+    <div>HP: <span id="hp">100</span>%</div>
+    <div>ОРУЖИЕ: <span>ТРУБА-ДРОБОВИК</span></div>
+    <div>ВРАГИ: <span id="enemiesLeft">0</span></div>
+    <div>ЭТАП: <span id="stageNum">1</span>/3</div>
+  </div>
+
+  <div id="overlay">
+    <h1>ЗОМБИ АПОКАЛИПСИС<br>ПРОТИВ БОМЖА ОЛЕГА И КОЛЬЦА 3</h1>
+    <p>WASD / Стрелки — бежать | Q/E или Мышь — поворот | ЛКМ / Пробел — стрелять | SHIFT — рывок</p>
+    <button id="startBtn" type="button" onclick="startGame()">НАЧАТЬ ИГРУ</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const spriteLayer = document.getElementById('sprite-layer');
+const gunEl = document.getElementById('player-gun');
+canvas.width = 640;
+canvas.height = 400;
+
+let audioCtx = null;
+let musicStarted = false;
+
+function play8Bit(type) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+
+    if (type === 'shoot') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(420, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.16);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.16);
+      osc.start(now); osc.stop(now + 0.16);
+    } else if (type === 'hit') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(170, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+      osc.start(now); osc.stop(now + 0.15);
+    } else if (type === 'dash') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.exponentialRampToValueAtTime(500, now + 0.12);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+      osc.start(now); osc.stop(now + 0.12);
+    } else if (type === 'win') {
+      osc.type = 'square';
+      [261.6, 329.6, 392.0, 523.3, 659.3].forEach((f, i) => osc.frequency.setValueAtTime(f, now + i * 0.11));
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.65);
+      osc.start(now); osc.stop(now + 0.65);
+    }
+  } catch (e) {}
+}
+
+function startMusic() {
+  if (musicStarted || !audioCtx) return;
+  musicStarted = true;
+  const notes = [82.4, 82.4, 164.8, 82.4, 82.4, 146.8, 82.4, 82.4, 130.8, 82.4, 82.4, 116.5, 82.4, 82.4, 123.5, 130.8];
+  let step = 0;
+  setInterval(() => {
+    if (!gameRunning || !audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(notes[step % notes.length], audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.14);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.14);
+    step++;
+  }, 175);
+}
+
+const mapRows = [
+  "11111111111111113331",
+  "10000100000000000001",
+  "10000200000000000001",
+  "10000200000000000001",
+  "10000100000000000001",
+  "10000000000000000001",
+  "10000100000000000001",
+  "10000100000000000001",
+  "10000100000000000001",
+  "11111111111111111111"
+];
+const levelMap = mapRows.map(r => r.split('').map(Number));
+
+const signCanvas = document.createElement('canvas');
+signCanvas.width = 256; signCanvas.height = 128;
+const sx = signCanvas.getContext('2d');
+sx.fillStyle = '#0033aa'; sx.fillRect(0, 0, 256, 128);
+sx.strokeStyle = '#00ffff'; sx.lineWidth = 8; sx.strokeRect(4, 4, 248, 120);
+sx.fillStyle = '#ffff00'; sx.font = 'bold 22px Courier New'; sx.textAlign = 'center';
+sx.fillText('ЛАБОРАТОРИЯ', 128, 52);
+sx.fillText('НЕЗНАЙКИ', 128, 88);
+
+let player = { x: 7.5, y: 5.0, dir: 0, hp: 100, dashTimer: 0 };
+let stage = 1;
+let enemies = [];
+let projectiles = [];
+let gunRecoil = 0;
+let gameRunning = false;
+const keys = {};
+
+function createEntityEl(src) {
+  const img = document.createElement('img');
+  img.src = src;
+  img.className = 'paint-sprite entity-img';
+  spriteLayer.appendChild(img);
+  return img;
+}
+
+function setupStage(s) {
+  stage = s;
+  document.getElementById('stageNum').innerText = stage;
+  spriteLayer.innerHTML = '';
+  enemies = [];
+  projectiles = [];
+
+  const add = (x, y, hp, type, src, cd = 0) => {
+    enemies.push({ x, y, hp, type, cooldown: cd, el: createEntityEl(src) });
+  };
+
+  if (stage === 1) {
+    document.getElementById('mission').innerText = "ЭТАП 1: Отстреливайся от зомби вместе с Умным Другом!";
+    player.x = 7.5; player.y = 5.0; player.dir = 0;
+    add(6.8, 4.0, 9999, 'friend', 'friend.png');
+    add(11.5, 3.5, 50, 'zombie', 'zombie.png');
+    add(12.5, 6.0, 50, 'zombie', 'zombie.png');
+    add(13.5, 4.5, 50, 'zombie', 'zombie.png');
+  } else if (stage === 2) {
+    document.getElementById('mission').innerText = "ЭТАП 2: Армия солдат заражена! Вы в здании — стреляйте через ОКНА!";
+    player.x = 3.0; player.y = 3.0; player.dir = 0;
+    add(2.5, 4.2, 9999, 'friend', 'friend.png');
+    add(8.5, 2.2, 75, 'soldier', 'soldier.png', 80);
+    add(9.8, 4.2, 75, 'soldier', 'soldier.png', 110);
+    add(11.0, 3.0, 75, 'soldier', 'soldier.png', 95);
+  } else if (stage === 3) {
+    document.getElementById('mission').innerText = "ЭТАП 3: Прорывайтесь к синей вывеске 'ЛАБОРАТОРИЯ НЕЗНАЙКИ'!";
+    add(13.0, 3.0, 60, 'zombie', 'zombie.png');
+    add(15.0, 5.0, 60, 'zombie', 'zombie.png');
+    add(17.5, 1.8, 9999, 'oleg', 'oleg.png');
+  }
+}
+
+function startGame() {
+  document.getElementById('overlay').style.display = 'none';
+  setupStage(1);
+  gameRunning = true;
+  play8Bit('dash');
+  startMusic();
+  if (canvas.requestPointerLock) {
+    try { canvas.requestPointerLock(); } catch (e) {}
+  }
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') shoot();
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && player.dashTimer <= 0 && gameRunning) {
+    player.dashTimer = 12;
+    play8Bit('dash');
+  }
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+document.getElementById('viewport').addEventListener('mousedown', () => {
+  if (gameRunning) {
+    if (canvas.requestPointerLock && document.pointerLockElement !== canvas) {
+      try { canvas.requestPointerLock(); } catch (e) {}
+    }
+    shoot();
+  }
+});
+
+window.addEventListener('mousemove', e => {
+  if (document.pointerLockElement === canvas) player.dir += e.movementX * 0.0032;
+});
+
+function hasLineOfSight(x1, y1, x2, y2) {
+  let dist = Math.hypot(x2 - x1, y2 - y1);
+  let steps = Math.floor(dist * 4);
+  for (let i = 1; i < steps; i++) {
+    let tx = Math.floor(x1 + ((x2 - x1) * i) / steps);
+    let ty = Math.floor(y1 + ((y2 - y1) * i) / steps);
+    if (levelMap[ty] && levelMap[ty][tx] === 1) return false;
+  }
+  return true;
+}
+
+function shoot() {
+  if (!gameRunning || gunRecoil > 0) return;
+  gunRecoil = 12;
+  gunEl.classList.add('recoil');
+  setTimeout(() => gunEl.classList.remove('recoil'), 90);
+  play8Bit('shoot');
+
+  let closest = null;
+  let minDist = 18;
+  enemies.forEach(en => {
+    if (en.type === 'friend' || en.type === 'oleg' || en.hp <= 0) return;
+    let dx = en.x - player.x;
+    let dy = en.y - player.y;
+    let dist = Math.hypot(dx, dy);
+    let angle = Math.atan2(dy, dx) - player.dir;
+    while (angle < -Math.PI) angle += Math.PI * 2;
+    while (angle > Math.PI) angle -= Math.PI * 2;
+    if (Math.abs(angle) < 0.22 && dist < minDist && hasLineOfSight(player.x, player.y, en.x, en.y)) {
+      minDist = dist;
+      closest = en;
+    }
+  });
+
+  if (closest) {
+    closest.hp -= 30;
+    play8Bit('hit');
+    if (closest.hp <= 0) closest.el.style.display = 'none';
+  }
+}
+
+function update() {
+  let speed = player.dashTimer > 0 ? 0.16 : 0.065;
+  if (player.dashTimer > 0) player.dashTimer--;
+  if (gunRecoil > 0) gunRecoil--;
+
+  if (keys['KeyQ'] || keys['ArrowLeft']) player.dir -= 0.045;
+  if (keys['KeyE'] || keys['ArrowRight']) player.dir += 0.045;
+
+  let moveX = 0, moveY = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) { moveX += Math.cos(player.dir) * speed; moveY += Math.sin(player.dir) * speed; }
+  if (keys['KeyS'] || keys['ArrowDown']) { moveX -= Math.cos(player.dir) * speed; moveY -= Math.sin(player.dir) * speed; }
+  if (keys['KeyA']) { moveX += Math.sin(player.dir) * speed; moveY -= Math.cos(player.dir) * speed; }
+  if (keys['KeyD']) { moveX -= Math.sin(player.dir) * speed; moveY += Math.cos(player.dir) * speed; }
+
+  if (levelMap[Math.floor(player.y)][Math.floor(player.x + moveX)] === 0) player.x += moveX;
+  if (levelMap[Math.floor(player.y + moveY)][Math.floor(player.x)] === 0) player.y += moveY;
+
+  let activeEnemies = 0;
+  enemies.forEach(en => {
+    if (en.hp <= 0) return;
+
+    if (en.type === 'friend') {
+      let d = Math.hypot(player.x - en.x, player.y - en.y);
+      if (d > 2.2) {
+        let nx = en.x + ((player.x - en.x) / d) * 0.045;
+        let ny = en.y + ((player.y - en.y) / d) * 0.045;
+        if (levelMap[Math.floor(ny)][Math.floor(nx)] === 0) { en.x = nx; en.y = ny; }
+      }
+      if (en.cooldown > 0) en.cooldown--;
+      else {
+let target = enemies.find(t => (t.type === 'zombie' || t.type === 'soldier') && t.hp > 0 && Math.hypot(t.x - en.x, t.y - en.y) < 10 && hasLineOfSight(en.x, en.y, t.x, t.y));
+if (target) {
+en.cooldown = 55;
+let ang = Math.atan2(target.y - en.y, target.x - en.x);
+projectiles.push({ x: en.x, y: en.y, vx: Math.cos(ang) * 0.22, vy: Math.sin(ang) * 0.22, fromPlayer: true, color: '#00ffff' });
+}
+}
+return;
+}
+if (en.type === 'oleg') return;
+activeEnemies++;
+let dx = player.x - en.x;
+let dy = player.y - en.y;
+let dist = Math.hypot(dx, dy);
+let moveSpeed = en.type === 'zombie' ? 0.02 : 0.012;
+if (dist > (en.type === 'soldier' ? 4.5 : 1.1)) {
+let nx = en.x + (dx / dist) * moveSpeed;
+let ny = en.y + (dy / dist) * moveSpeed;
+if (levelMap[Math.floor(ny)][Math.floor(nx)] === 0) { en.x = nx; en.y = ny; }
+} else if (en.type === 'zombie') {
+player.hp -= 0.3;
+}
+if (en.type === 'soldier') {
+if (en.cooldown > 0) en.cooldown--;
+else if (dist < 11 && hasLineOfSight(en.x, en.y, player.x, player.y)) {
+en.cooldown = 110;
+let ang = Math.atan2(dy, dx);
+projectiles.push({ x: en.x, y: en.y, vx: Math.cos(ang) * 0.14, vy: Math.sin(ang) * 0.14, fromPlayer: false, color: '#ff4400' });
+}
+}
+});
+projectiles.forEach(p => {
+p.x += p.vx;
+p.y += p.vy;
+let tile = levelMap[Math.floor(p.y)] && levelMap[Math.floor(p.y)][Math.floor(p.x)];
+if (tile === 1) { p.dead = true; return; }
+if (p.fromPlayer) {
+enemies.forEach(en => {
+if ((en.type === 'zombie' || en.type === 'soldier') && en.hp > 0 && Math.hypot(en.x - p.x, en.y - p.y) < 0.6) {
+en.hp -= 20;
+p.dead = true;
+if (en.hp <= 0) { en.el.style.display = 'none'; play8Bit('hit'); }
+}
+});
+} else {
+if (Math.hypot(player.x - p.x, player.y - p.y) < 0.5 && player.dashTimer <= 0) {
+player.hp -= 12;
+p.dead = true;
+}
+}
+});
+projectiles = projectiles.filter(p => !p.dead);
+if (player.hp <= 0) {
+gameRunning = false;
+const ov = document.getElementById('overlay');
+ov.style.display = 'flex';
+ov.innerHTML = <h1>ТЕБЯ ПОБЕДИЛИ!</h1><button onclick="location.reload()">ПОПРОБОВАТЬ СНОВА</button>;
+return;
+}
+document.getElementById('hp').innerText = Math.max(0, Math.floor(player.hp));
+document.getElementById('enemiesLeft').innerText = activeEnemies;
+if (stage === 1 && activeEnemies === 0) setupStage(2);
+if (stage === 2 && activeEnemies === 0) setupStage(3);
+if (stage === 3 && player.x > 16.5 && player.y < 2.8) {
+gameRunning = false;
+play8Bit('win');
+const ov = document.getElementById('overlay');
+ov.style.display = 'flex';
+ov.innerHTML = <h1 style="color:#0f0">ВЫ НАШЛИ ЛАБОРАТОРИЮ НЕЗНАЙКИ!</h1> <p style="font-size:20px; max-width:650px; color:#fff;"> Твой <b>Умный Друг</b> зашёл в лабораторию и сварил лечебное зелье!<br><br> Все зомби, заражённые солдаты и <b>Бомж Олег</b> полностью вылечились! Победа! </p> <button onclick="location.reload()">ИГРАТЬ ЕЩЁ РАЗ</button>;
+}
+}
+function render() {
+const w = canvas.width;
+const h = canvas.height;
+ctx.clearRect(0, 0, w, h);
+const numRays = 160;
+const fov = Math.PI / 3;
+const zBuffer = new Array(numRays);
+for (let i = 0; i < numRays; i++) {
+let rayAngle = (player.dir - fov / 2) + (i / numRays) * fov;
+let dist = 0;
+let hit = 0;
+let rx = Math.cos(rayAngle);
+let ry = Math.sin(rayAngle);
+while (hit === 0 && dist < 24) {
+dist += 0.04;
+let tx = Math.floor(player.x + rx * dist);
+let ty = Math.floor(player.y + ry * dist);
+if (tx < 0 || tx >= 20 || ty < 0 || ty >= 10) { hit = 1; break; }
+if (levelMap[ty][tx] > 0) hit = levelMap[ty][tx];
+}
+dist *= Math.cos(rayAngle - player.dir);
+zBuffer[i] = dist;
+let wallHeight = Math.min(h, h / dist);
+let shade = Math.max(60, 240 - dist * 10);
+if (hit === 1) {
+ctx.fillStyle = rgba(${shade}, ${shade * 0.35}, ${shade * 0.35}, 0.85);
+ctx.fillRect(i * 4, (h - wallHeight) / 2, 4, wallHeight);
+} else if (hit === 2) {
+ctx.fillStyle = rgba(${shade}, ${shade * 0.35}, ${shade * 0.35}, 0.85);
+ctx.fillRect(i * 4, (h - wallHeight) / 2, 4, wallHeight * 0.3);
+ctx.fillRect(i * 4, (h + wallHeight) / 2 - wallHeight * 0.3, 4, wallHeight * 0.3);
+} else if (hit === 3) {
+ctx.fillStyle = 'rgba(0, 68, 221, 0.9)';
+ctx.fillRect(i * 4, (h - wallHeight) / 2, 4, wallHeight);
+if (i % 12 === 0) {
+ctx.drawImage(signCanvas, i * 4 - 45, (h - wallHeight * 0.45) / 2, 110, wallHeight * 0.45);
+}
+}
+}
+projectiles.forEach(pt => {
+let dx = pt.x - player.x;
+let dy = pt.y - player.y;
+let dist = Math.hypot(dx, dy);
+let angle = Math.atan2(dy, dx) - player.dir;
+while (angle < -Math.PI) angle += Math.PI * 2;
+while (angle > Math.PI) angle -= Math.PI * 2;
+if (Math.abs(angle) < fov / 1.4 && dist > 0.2) {
+let screenX = (0.5 * (angle / (fov / 2)) + 0.5) * w;
+let rayIdx = Math.floor(screenX / 4);
+if (rayIdx >= 0 && rayIdx < numRays && zBuffer[rayIdx] > dist) {
+let pSize = Math.max(5, 24 / dist);
+ctx.fillStyle = pt.color;
+ctx.fillRect(screenX - pSize / 2, h / 2, pSize, pSize);
+}
+}
+});
+const viewW = spriteLayer.clientWidth;
+const viewH = spriteLayer.clientHeight;
+enemies.forEach(en => {
+if (en.hp <= 0) return;
+let dx = en.x - player.x;
+let dy = en.y - player.y;
+let dist = Math.hypot(dx, dy);
+let angle = Math.atan2(dy, dx) - player.dir;
+while (angle < -Math.PI) angle += Math.PI * 2;
+while (angle > Math.PI) angle -= Math.PI * 2;
+let screenXRatio = 0.5 * (angle / (fov / 2)) + 0.5;
+let rayIdx = Math.floor(screenXRatio * numRays);
+if (Math.abs(angle) < fov / 1.35 && dist > 0.3 && rayIdx >= 0 && rayIdx < numRays && zBuffer[rayIdx] > dist) {
+en.el.style.display = 'block';
+let size = Math.min(viewH * 0.85, (viewH / dist) * 1.15);
+en.el.style.width = size + 'px';
+en.el.style.height = size + 'px';
+en.el.style.left = (screenXRatio * viewW) + 'px';
+en.el.style.top = (viewH * 0.52) + 'px';
+en.el.style.zIndex = Math.floor(100 - dist);
+} else {
+en.el.style.display = 'none';
+}
+});
+}
+function loop() {
+if (!gameRunning) return;
+update();
+render();
+requestAnimationFrame(loop);
+}
